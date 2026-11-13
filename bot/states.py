@@ -20,6 +20,10 @@ class ThanksCommentStates(StatesGroup):
     waiting_for_comment = State()
 
 
+class SpecialDayStates(StatesGroup):
+    waiting_for_changes = State()
+
+
 class WorkReportStates(StatesGroup):
     choosing_date = State()
     waiting_for_date = State()

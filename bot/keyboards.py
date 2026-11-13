@@ -166,6 +166,12 @@ def management_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="💌 Заявки", callback_data="admin_requests")],
             [
                 InlineKeyboardButton(
+                    text="🌸 Праздники",
+                    callback_data="admin_special_days",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="📣 Сообщение всем",
                     callback_data="admin_broadcast",
                 )
@@ -176,6 +182,19 @@ def management_keyboard() -> InlineKeyboardMarkup:
                     callback_data="admin_message_user",
                 )
             ],
+        ]
+    )
+
+
+def special_days_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Изменить",
+                    callback_data="admin_special_days_edit",
+                )
+            ]
         ]
     )
 

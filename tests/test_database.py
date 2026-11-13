@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 from bot.db import Database
+from bot.special_days import SpecialDayChange, SpecialDayType
 
 
 class DatabaseTests(unittest.IsolatedAsyncioTestCase):
@@ -134,6 +136,69 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         await self.database.set_work_notifications_enabled(101, False)
         self.assertEqual(
             await self.database.list_due_work_reminders("2026-10-14", 17 * 60 + 30),
+            [],
+        )
+
+    async def test_special_days_are_saved_replaced_filtered_and_deleted(self) -> None:
+        await self.database.apply_special_day_changes(
+            [
+                SpecialDayChange(date(2026, 12, 31), SpecialDayType.SHORTENED),
+                SpecialDayChange(date(2027, 1, 1), SpecialDayType.HOLIDAY),
+            ]
+        )
+        await self.database.apply_special_day_changes(
+            [
+                SpecialDayChange(
+                    date(2026, 12, 31),
+                    SpecialDayType.WORKING_WEEKEND,
+                )
+            ]
+        )
+
+        saved = await self.database.get_special_day(date(2026, 12, 31))
+        self.assertIsNotNone(saved)
+        assert saved is not None
+        self.assertEqual(saved.day_type, SpecialDayType.WORKING_WEEKEND)
+        ranged = await self.database.list_special_days(
+            date(2026, 12, 1),
+            date(2026, 12, 31),
+        )
+        self.assertEqual([item.work_date for item in ranged], [date(2026, 12, 31)])
+
+        await self.database.apply_special_day_changes(
+            [SpecialDayChange(date(2026, 12, 31), None)]
+        )
+        self.assertIsNone(await self.database.get_special_day(date(2026, 12, 31)))
+
+    async def test_shortened_day_has_earlier_report_and_morning_windows(self) -> None:
+        work_date = "2026-12-31"
+        self.assertEqual(
+            await self.database.list_due_work_reminders(
+                work_date,
+                16 * 60 + 29,
+                90,
+            ),
+            [],
+        )
+        report_candidates = await self.database.list_due_work_reminders(
+            work_date,
+            16 * 60 + 30,
+            90,
+        )
+        self.assertEqual([item.telegram_id for item in report_candidates], [101])
+
+        self.assertEqual(
+            await self.database.list_due_short_day_notices(work_date, 9 * 60 + 14),
+            [],
+        )
+        morning_candidates = await self.database.list_due_short_day_notices(
+            work_date,
+            9 * 60 + 15,
+        )
+        self.assertEqual([item.telegram_id for item in morning_candidates], [101])
+        await self.database.mark_short_day_notice_handled(101, work_date, "sent")
+        self.assertEqual(
+            await self.database.list_due_short_day_notices(work_date, 9 * 60 + 16),
             [],
         )
 

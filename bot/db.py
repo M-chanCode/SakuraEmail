@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
 
 from .formatting import MOSCOW_TIMEZONE
+from .special_days import SpecialDay, SpecialDayChange, SpecialDayType
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,13 @@ class WorkSettings:
 @dataclass(frozen=True, slots=True)
 class WorkReminderCandidate:
     telegram_id: int
+    end_minutes: int
+
+
+@dataclass(frozen=True, slots=True)
+class ShortDayNoticeCandidate:
+    telegram_id: int
+    start_minutes: int
     end_minutes: int
 
 
@@ -130,6 +138,22 @@ class Database:
                 FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)
             );
 
+            CREATE TABLE IF NOT EXISTS special_days (
+                work_date TEXT PRIMARY KEY,
+                day_type TEXT NOT NULL
+                    CHECK (day_type IN ('holiday', 'shortened', 'working_weekend')),
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS short_day_notices (
+                telegram_id INTEGER NOT NULL,
+                work_date TEXT NOT NULL,
+                result TEXT NOT NULL,
+                handled_at TEXT NOT NULL,
+                PRIMARY KEY (telegram_id, work_date),
+                FOREIGN KEY (telegram_id) REFERENCES users(telegram_id)
+            );
+
             CREATE TABLE IF NOT EXISTS access_snapshot (
                 telegram_id INTEGER PRIMARY KEY,
                 access_status TEXT NOT NULL
@@ -147,6 +171,9 @@ class Database:
 
             CREATE INDEX IF NOT EXISTS idx_work_reminders_date
                 ON work_reminders(work_date);
+
+            CREATE INDEX IF NOT EXISTS idx_special_days_type_date
+                ON special_days(day_type, work_date);
 
             """
         )
@@ -660,10 +687,86 @@ class Database:
             )
             await connection.commit()
 
+    async def get_special_day(self, work_date: date) -> SpecialDay | None:
+        connection = self._require_connection()
+        cursor = await connection.execute(
+            """
+            SELECT work_date, day_type
+            FROM special_days
+            WHERE work_date = ?
+            """,
+            (work_date.isoformat(),),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None:
+            return None
+        return SpecialDay(
+            work_date=date.fromisoformat(str(row["work_date"])),
+            day_type=SpecialDayType(str(row["day_type"])),
+        )
+
+    async def list_special_days(
+        self,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[SpecialDay]:
+        connection = self._require_connection()
+        clauses: list[str] = []
+        parameters: list[str] = []
+        if start_date is not None:
+            clauses.append("work_date >= ?")
+            parameters.append(start_date.isoformat())
+        if end_date is not None:
+            clauses.append("work_date <= ?")
+            parameters.append(end_date.isoformat())
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        cursor = await connection.execute(
+            "SELECT work_date, day_type FROM special_days"
+            + where
+            + " ORDER BY work_date",
+            parameters,
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [
+            SpecialDay(
+                work_date=date.fromisoformat(str(row["work_date"])),
+                day_type=SpecialDayType(str(row["day_type"])),
+            )
+            for row in rows
+        ]
+
+    async def apply_special_day_changes(
+        self,
+        changes: tuple[SpecialDayChange, ...] | list[SpecialDayChange],
+    ) -> None:
+        connection = self._require_connection()
+        async with self._lock:
+            for change in changes:
+                if change.day_type is None:
+                    await connection.execute(
+                        "DELETE FROM special_days WHERE work_date = ?",
+                        (change.work_date.isoformat(),),
+                    )
+                    continue
+                await connection.execute(
+                    """
+                    INSERT INTO special_days (work_date, day_type, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(work_date) DO UPDATE SET
+                        day_type = excluded.day_type,
+                        updated_at = excluded.updated_at
+                    """,
+                    (change.work_date.isoformat(), change.day_type.value, _utc_now()),
+                )
+            await connection.commit()
+
     async def list_due_work_reminders(
         self,
         work_date: str,
         current_minutes: int,
+        minutes_before_end: int = 30,
     ) -> list[WorkReminderCandidate]:
         connection = self._require_connection()
         cursor = await connection.execute(
@@ -689,7 +792,8 @@ class Database:
         candidates: list[WorkReminderCandidate] = []
         for row in rows:
             end_minutes = int(row["end_minutes"])
-            if end_minutes - 30 <= current_minutes < end_minutes:
+            due_minutes = end_minutes - minutes_before_end
+            if due_minutes <= current_minutes < due_minutes + 30:
                 candidates.append(
                     WorkReminderCandidate(
                         telegram_id=int(row["telegram_id"]),
@@ -697,6 +801,65 @@ class Database:
                     )
                 )
         return candidates
+
+    async def list_due_short_day_notices(
+        self,
+        work_date: str,
+        current_minutes: int,
+    ) -> list[ShortDayNoticeCandidate]:
+        connection = self._require_connection()
+        cursor = await connection.execute(
+            """
+            SELECT
+                users.telegram_id,
+                COALESCE(preferences.start_minutes, 540) AS start_minutes,
+                COALESCE(preferences.end_minutes, 1080) AS end_minutes
+            FROM users
+            LEFT JOIN work_preferences AS preferences
+                ON preferences.telegram_id = users.telegram_id
+            LEFT JOIN short_day_notices AS notice
+                ON notice.telegram_id = users.telegram_id
+               AND notice.work_date = ?
+            WHERE COALESCE(preferences.notifications_enabled, 1) = 1
+              AND notice.telegram_id IS NULL
+            ORDER BY users.telegram_id
+            """,
+            (work_date,),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+
+        candidates: list[ShortDayNoticeCandidate] = []
+        for row in rows:
+            start_minutes = int(row["start_minutes"])
+            due_minutes = start_minutes + 15
+            if due_minutes <= current_minutes < due_minutes + 60:
+                candidates.append(
+                    ShortDayNoticeCandidate(
+                        telegram_id=int(row["telegram_id"]),
+                        start_minutes=start_minutes,
+                        end_minutes=int(row["end_minutes"]),
+                    )
+                )
+        return candidates
+
+    async def mark_short_day_notice_handled(
+        self,
+        telegram_id: int,
+        work_date: str,
+        result: str,
+    ) -> None:
+        connection = self._require_connection()
+        async with self._lock:
+            await connection.execute(
+                """
+                INSERT OR IGNORE INTO short_day_notices (
+                    telegram_id, work_date, result, handled_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (telegram_id, work_date, result, _utc_now()),
+            )
+            await connection.commit()
 
     async def mark_work_reminder_handled(
         self,

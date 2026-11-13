@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from bot.keyboards import main_keyboard, work_settings_keyboard
+from bot.keyboards import main_keyboard, management_keyboard, work_settings_keyboard
 
 
 class KeyboardTests(unittest.TestCase):
@@ -19,6 +19,15 @@ class KeyboardTests(unittest.TestCase):
         self.assertIn("Оставить заявку", [button.text for button in buttons])
         self.assertIn("new_key_request", [button.callback_data for button in buttons])
         self.assertNotIn("Изменить старый отчёт", [button.text for button in buttons])
+
+    def test_management_has_special_days_button(self) -> None:
+        keyboard = management_keyboard()
+        callbacks = [
+            button.callback_data
+            for row in keyboard.inline_keyboard
+            for button in row
+        ]
+        self.assertIn("admin_special_days", callbacks)
 
 
 if __name__ == "__main__":

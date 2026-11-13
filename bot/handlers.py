@@ -46,12 +46,15 @@ from .keyboards import (
     close_request_keyboard,
     main_keyboard,
     management_keyboard,
+    special_days_keyboard,
     thanks_settings_keyboard,
 )
+from .special_days import format_special_days, parse_special_day_changes
 from .states import (
     ApplicationStates,
     CreatorBroadcastStates,
     CreatorMessageStates,
+    SpecialDayStates,
     ThanksCommentStates,
 )
 
@@ -486,6 +489,76 @@ def build_router(
                 _format_request(request),
                 reply_markup=close_request_keyboard(request.request_id),
             )
+
+    @router.callback_query(F.data == "admin_special_days")
+    async def admin_special_days(callback: CallbackQuery) -> None:
+        if not _is_owner(callback.from_user, settings):
+            await callback.answer("Недостаточно прав", show_alert=True)
+            return
+        await callback.answer()
+        if callback.message is None:
+            return
+        days = await database.list_special_days()
+        await callback.message.answer(
+            format_special_days(days),
+            reply_markup=special_days_keyboard(),
+        )
+
+    @router.callback_query(F.data == "admin_special_days_edit")
+    async def edit_special_days(
+        callback: CallbackQuery,
+        state: FSMContext,
+        bot: Bot,
+    ) -> None:
+        if not _is_owner(callback.from_user, settings):
+            await callback.answer("Недостаточно прав", show_alert=True)
+            return
+        await callback.answer()
+        await _remove_action_prompt(bot, state)
+        await state.clear()
+        await state.set_state(SpecialDayStates.waiting_for_changes)
+        if callback.message is None:
+            return
+        prompt = await callback.message.answer(
+            f"{SAKURA_1} <b>Изменение особенных дней</b>\n\n"
+            "Отправьте даты одним сообщением, каждую с новой строки:\n"
+            "<code>01.01.2027 праздник\n"
+            "31.12.2026 сокращенный\n"
+            "07.11.2026 рабочий</code>\n\n"
+            "Чтобы убрать дату из календаря:\n"
+            "<code>01.01.2027 удалить</code>\n\n"
+            "Повторное добавление даты заменит её прежний тип.",
+            reply_markup=cancel_action_keyboard(),
+        )
+        await _remember_action_prompt(state, prompt)
+
+    @router.message(SpecialDayStates.waiting_for_changes)
+    async def save_special_days(
+        message: Message,
+        state: FSMContext,
+        bot: Bot,
+    ) -> None:
+        user = _require_user(message.from_user)
+        if user.id != settings.owner_id:
+            return
+        try:
+            changes = parse_special_day_changes(message.text or "")
+        except ValueError as exc:
+            await message.answer(
+                f"Не получилось прочитать изменения. {escape(str(exc))}\n\n"
+                "Попробуйте ещё раз или нажмите «Отменить».",
+                reply_markup=cancel_action_keyboard(),
+            )
+            return
+
+        await database.apply_special_day_changes(changes)
+        await _remove_action_prompt(bot, state)
+        await state.clear()
+        days = await database.list_special_days()
+        await message.answer(
+            f"{PINK_STARS} Календарь обновлён.\n\n{format_special_days(days)}",
+            reply_markup=special_days_keyboard(),
+        )
 
     @router.callback_query(F.data == "admin_message_user")
     async def begin_creator_message(

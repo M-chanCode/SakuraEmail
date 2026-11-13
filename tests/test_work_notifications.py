@@ -12,11 +12,14 @@ from bot.access import AccessController
 from bot.api import MissingReportsResult, SakuraApiError, SakuraAppsScriptApi, WorkReport
 from bot.db import Database, WorkReminderCandidate
 from bot.formatting import MOSCOW_TIMEZONE
+from bot.special_days import SpecialDayChange, SpecialDayType
 from bot.work_notifications import (
     REMINDER_TEXT,
     current_week_work_dates,
+    deliver_shortened_day_notices,
     deliver_work_report_notifications,
     format_friday_reminder,
+    format_shortened_day_notice,
 )
 
 
@@ -121,6 +124,97 @@ class WorkNotificationTests(unittest.IsolatedAsyncioTestCase):
         database.mark_work_reminder_handled.assert_not_awaited()
         self.api.get_work_report.assert_not_awaited()
         self.bot.send_message.assert_not_awaited()
+
+    async def test_holiday_skips_report_reminder(self) -> None:
+        await self.database.apply_special_day_changes(
+            [SpecialDayChange(MONDAY.date(), SpecialDayType.HOLIDAY)]
+        )
+
+        await deliver_work_report_notifications(
+            self.bot,
+            self.api,
+            self.database,
+            self.access,
+            now=_at(17, 30),
+        )
+
+        self.api.get_work_report.assert_not_awaited()
+        self.bot.send_message.assert_not_awaited()
+
+    async def test_shortened_day_report_reminder_is_one_hour_earlier(self) -> None:
+        await self.database.apply_special_day_changes(
+            [SpecialDayChange(MONDAY.date(), SpecialDayType.SHORTENED)]
+        )
+        self.api.get_work_report.return_value = _report(found=False)
+
+        await deliver_work_report_notifications(
+            self.bot,
+            self.api,
+            self.database,
+            self.access,
+            now=_at(16, 29),
+        )
+        self.bot.send_message.assert_not_awaited()
+
+        await deliver_work_report_notifications(
+            self.bot,
+            self.api,
+            self.database,
+            self.access,
+            now=_at(16, 30),
+        )
+
+        self.api.get_work_report.assert_awaited_once_with(101, "2026-10-12")
+        self.bot.send_message.assert_awaited_once()
+
+    async def test_shortened_day_morning_notice_uses_personal_schedule(self) -> None:
+        await self.database.apply_special_day_changes(
+            [SpecialDayChange(MONDAY.date(), SpecialDayType.SHORTENED)]
+        )
+
+        await deliver_shortened_day_notices(
+            self.bot,
+            self.database,
+            self.access,
+            now=_at(9, 14),
+        )
+        self.bot.send_message.assert_not_awaited()
+
+        await deliver_shortened_day_notices(
+            self.bot,
+            self.database,
+            self.access,
+            now=_at(9, 15),
+        )
+        await deliver_shortened_day_notices(
+            self.bot,
+            self.database,
+            self.access,
+            now=_at(9, 16),
+        )
+
+        self.bot.send_message.assert_awaited_once()
+        args, _ = self.bot.send_message.await_args
+        self.assertEqual(args[0], 101)
+        self.assertIn("сокращённый рабочий день", args[1])
+        self.assertIn("<code>17:00</code> мск", args[1])
+
+    async def test_working_weekend_requires_report(self) -> None:
+        await self.database.apply_special_day_changes(
+            [SpecialDayChange(SATURDAY.date(), SpecialDayType.WORKING_WEEKEND)]
+        )
+        self.api.get_work_report.return_value = _report(found=False)
+
+        await deliver_work_report_notifications(
+            self.bot,
+            self.api,
+            self.database,
+            self.access,
+            now=SATURDAY,
+        )
+
+        self.api.get_work_report.assert_awaited_once_with(101, "2026-10-17")
+        self.bot.send_message.assert_awaited_once()
 
     async def test_existing_report_suppresses_message_and_marks_date_handled(self) -> None:
         database = AsyncMock(spec=Database)
@@ -257,6 +351,42 @@ class WorkNotificationTests(unittest.IsolatedAsyncioTestCase):
         args, _ = self.bot.send_message.await_args
         self.assertEqual(args, (101, REMINDER_TEXT))
 
+    async def test_friday_check_excludes_holidays(self) -> None:
+        holiday = date(2026, 10, 14)
+        await self.database.apply_special_day_changes(
+            [SpecialDayChange(holiday, SpecialDayType.HOLIDAY)]
+        )
+        self.api.get_missing_work_report_dates.return_value = MissingReportsResult(
+            employee_found=True,
+            missing_dates=(
+                "2026-10-12",
+                "2026-10-13",
+                "2026-10-14",
+                "2026-10-15",
+                "2026-10-16",
+            ),
+        )
+
+        await deliver_work_report_notifications(
+            self.bot,
+            self.api,
+            self.database,
+            self.access,
+            now=_friday_at(17, 30),
+        )
+
+        self.api.get_missing_work_report_dates.assert_awaited_once_with(
+            101,
+            [
+                "2026-10-12",
+                "2026-10-13",
+                "2026-10-15",
+                "2026-10-16",
+            ],
+        )
+        args, _ = self.bot.send_message.await_args
+        self.assertNotIn("14.10.2026", args[1])
+
     def test_current_week_and_friday_message_are_fixed_to_monday_friday(self) -> None:
         self.assertEqual(
             current_week_work_dates(date(2026, 10, 16)),
@@ -278,6 +408,7 @@ class WorkNotificationTests(unittest.IsolatedAsyncioTestCase):
             "ПТ • <code>16.10.2026</code>",
         )
         self.assertEqual(format_friday_reminder([]), REMINDER_TEXT)
+        self.assertIn("<code>17:00</code> мск", format_shortened_day_notice(18 * 60))
 
 
 if __name__ == "__main__":

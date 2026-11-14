@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from bot.keyboards import main_keyboard, management_keyboard, work_settings_keyboard
+from bot.keyboards import (
+    broadcast_confirmation_keyboard,
+    main_keyboard,
+    management_keyboard,
+    work_settings_keyboard,
+)
 
 
 class KeyboardTests(unittest.TestCase):
@@ -28,6 +33,17 @@ class KeyboardTests(unittest.TestCase):
             for button in row
         ]
         self.assertIn("admin_special_days", callbacks)
+
+    def test_broadcast_preview_can_add_or_replace_sticker(self) -> None:
+        without_sticker = broadcast_confirmation_keyboard()
+        with_sticker = broadcast_confirmation_keyboard(has_sticker=True)
+
+        self.assertEqual(without_sticker.inline_keyboard[0][0].text, "Добавить стикер")
+        self.assertEqual(with_sticker.inline_keyboard[0][0].text, "Заменить стикер")
+        self.assertEqual(
+            with_sticker.inline_keyboard[0][0].callback_data,
+            "admin_broadcast_add_sticker",
+        )
 
 
 if __name__ == "__main__":

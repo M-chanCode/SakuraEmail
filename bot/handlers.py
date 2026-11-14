@@ -145,7 +145,7 @@ def build_router(
     async def cancel_action(callback: CallbackQuery, state: FSMContext) -> None:
         await _cancel_current_action(callback, state)
 
-    @router.message(OwnerCustomEmojiFilter(settings.owner_id))
+    @router.message(StateFilter(None), OwnerCustomEmojiFilter(settings.owner_id))
     async def show_custom_emoji_ids(
         message: Message,
         custom_emoji_ids: tuple[str, ...],
@@ -159,7 +159,7 @@ def build_router(
         ]
         await message.answer("\n".join(lines))
 
-    @router.message(F.sticker)
+    @router.message(StateFilter(None), F.sticker)
     async def answer_with_random_sticker(message: Message, bot: Bot) -> None:
         try:
             sticker_file_id = await sticker_responder.choose(bot)
@@ -614,7 +614,8 @@ def build_router(
             recipient_username=recipient.username or username,
         )
         prompt = await message.answer(
-            f"Теперь отправьте сообщение для @{escape(recipient.username or username)}.",
+            f"Теперь отправьте сообщение для @{escape(recipient.username or username)}.\n\n"
+            "Можно использовать оформление Telegram и кастомные эмодзи.",
             reply_markup=cancel_action_keyboard(),
         )
         await _remember_action_prompt(state, prompt)
@@ -625,11 +626,12 @@ def build_router(
         if user.id != settings.owner_id:
             return
 
-        text = (message.text or "").strip()
-        if not text:
+        plain_text = (message.text or "").strip()
+        if not plain_text:
             await message.answer("Отправьте сообщение текстом.")
             return
-        if len(text) > 3500:
+        html_text = _message_html(message)
+        if len(html_text) > 3500:
             await message.answer("Сообщение слишком длинное. Сократите его до 3500 символов.")
             return
 
@@ -644,7 +646,7 @@ def build_router(
         try:
             await bot.send_message(
                 recipient_id,
-                "💌 <b>Сообщение от создателя</b>\n\n" + escape(text),
+                "💌 <b>Сообщение от создателя</b>\n\n" + html_text,
             )
         except (TelegramForbiddenError, TelegramBadRequest):
             await message.answer(
@@ -678,7 +680,8 @@ def build_router(
                 "Отправьте текст одним сообщением. Можно использовать оформление "
                 "Telegram: <b>жирный</b>, <i>курсив</i>, <u>подчёркивание</u>, "
                 "<s>зачёркивание</s>, <code>моноширинный шрифт</code>, ссылки, "
-                "спойлеры и цитаты. Перед рассылкой я покажу превью.",
+                "спойлеры, цитаты и кастомные эмодзи. Перед рассылкой я покажу "
+                "превью, где при желании можно добавить один стикер AinoStick.",
                 reply_markup=cancel_action_keyboard(),
             )
             await _remember_action_prompt(state, prompt)
@@ -695,19 +698,79 @@ def build_router(
         if not text:
             await message.answer("Отправьте сообщение текстом.")
             return
-        html_text = message.html_text.strip()
+        html_text = _message_html(message)
         if len(html_text) > 3500:
             await message.answer("Сообщение слишком длинное. Сократите его до 3500 символов.")
             return
 
         await _remove_action_prompt(bot, state)
         await state.set_state(CreatorBroadcastStates.confirming)
-        await state.update_data(broadcast_html=html_text)
+        await state.update_data(
+            broadcast_html=html_text,
+            broadcast_sticker_file_id="",
+        )
         preview = await message.answer(
             "📣 <b>Так сообщение увидят пользователи:</b>\n\n" + html_text,
             reply_markup=broadcast_confirmation_keyboard(),
         )
         await _remember_action_prompt(state, preview)
+
+    @router.callback_query(F.data == "admin_broadcast_add_sticker")
+    async def begin_broadcast_sticker(
+        callback: CallbackQuery,
+        state: FSMContext,
+        bot: Bot,
+    ) -> None:
+        if not _is_owner(callback.from_user, settings):
+            await callback.answer("Недостаточно прав", show_alert=True)
+            return
+        if await state.get_state() != CreatorBroadcastStates.confirming.state:
+            await callback.answer("Эта рассылка уже завершена", show_alert=True)
+            return
+        await callback.answer()
+        await _remove_action_prompt(bot, state)
+        await state.set_state(CreatorBroadcastStates.waiting_for_sticker)
+        if callback.message is not None:
+            prompt = await callback.message.answer(
+                "Пришлите один стикер из набора <b>AinoStick</b>. "
+                "Он будет отправлен пользователям сразу после текста.",
+                reply_markup=cancel_action_keyboard(),
+            )
+            await _remember_action_prompt(state, prompt)
+
+    @router.message(CreatorBroadcastStates.waiting_for_sticker, F.sticker)
+    async def receive_broadcast_sticker(
+        message: Message,
+        state: FSMContext,
+        bot: Bot,
+    ) -> None:
+        if message.from_user is None or message.from_user.id != settings.owner_id:
+            return
+        sticker = message.sticker
+        if sticker is None or sticker.set_name != AINO_STICKER_SET_NAME:
+            await message.answer(
+                "Подойдёт только стикер из набора AinoStick. Пришлите другой "
+                "или нажмите «Отменить»."
+            )
+            return
+
+        await _remove_action_prompt(bot, state)
+        await state.set_state(CreatorBroadcastStates.confirming)
+        await state.update_data(broadcast_sticker_file_id=sticker.file_id)
+        await message.answer_sticker(sticker=sticker.file_id)
+        confirmation = await message.answer(
+            "Стикер добавлен к рассылке. Он будет отправлен после сообщения.",
+            reply_markup=broadcast_confirmation_keyboard(has_sticker=True),
+        )
+        await _remember_action_prompt(state, confirmation)
+
+    @router.message(CreatorBroadcastStates.waiting_for_sticker)
+    async def reject_non_sticker_for_broadcast(message: Message) -> None:
+        if message.from_user is None or message.from_user.id != settings.owner_id:
+            return
+        await message.answer(
+            "Пришлите именно стикер из набора AinoStick или нажмите «Отменить»."
+        )
 
     @router.callback_query(F.data == "admin_broadcast_cancel")
     async def cancel_broadcast(callback: CallbackQuery, state: FSMContext) -> None:
@@ -737,6 +800,7 @@ def build_router(
 
         data = await state.get_data()
         html_text = str(data.get("broadcast_html", "")).strip()
+        sticker_file_id = str(data.get("broadcast_sticker_file_id", "")).strip()
         if not html_text:
             await state.clear()
             await callback.answer("Текст сообщения потерялся", show_alert=True)
@@ -761,30 +825,38 @@ def build_router(
 
         delivered = 0
         unavailable = 0
+        sticker_unavailable = 0
         outgoing_text = "📣 <b>Общее сообщение</b>\n\n" + html_text
         for recipient in recipients:
-            try:
-                await bot.send_message(recipient.telegram_id, outgoing_text)
-            except TelegramRetryAfter as exc:
-                await asyncio.sleep(exc.retry_after)
-                try:
-                    await bot.send_message(recipient.telegram_id, outgoing_text)
-                except TelegramAPIError:
-                    unavailable += 1
-                else:
-                    delivered += 1
-            except TelegramAPIError:
+            if not await _send_message_with_retry(
+                bot,
+                recipient.telegram_id,
+                outgoing_text,
+            ):
                 unavailable += 1
-            else:
-                delivered += 1
+                await asyncio.sleep(0.05)
+                continue
+
+            delivered += 1
+            if sticker_file_id and not await _send_sticker_with_retry(
+                bot,
+                recipient.telegram_id,
+                sticker_file_id,
+            ):
+                sticker_unavailable += 1
             await asyncio.sleep(0.05)
 
         await state.clear()
         if callback.message is not None:
-            await callback.message.answer(
+            summary = (
                 f"{PINK_STARS} <b>Рассылка завершена</b>\n"
                 f"Доставлено: {delivered}\n"
-                f"Недоступны в Telegram: {unavailable}",
+                f"Недоступны в Telegram: {unavailable}"
+            )
+            if sticker_file_id:
+                summary += f"\nСтикер не доставлен: {sticker_unavailable}"
+            await callback.message.answer(
+                summary,
                 reply_markup=main_keyboard(True),
             )
 
@@ -959,6 +1031,10 @@ def _custom_emoji_ids(message: Message) -> tuple[str, ...]:
     return tuple(result)
 
 
+def _message_html(message: Message) -> str:
+    return message.html_text.strip()
+
+
 def _format_thanks_stats(stats: ThanksStats) -> str:
     notifications = "включены" if stats.notifications_enabled else "отключены"
     return (
@@ -967,3 +1043,39 @@ def _format_thanks_stats(stats: ThanksStats) -> str:
         f"За всё время: {stats.total}\n"
         f"Уведомления: {notifications}"
     )
+
+
+async def _send_message_with_retry(
+    bot: Bot,
+    telegram_id: int,
+    text: str,
+) -> bool:
+    try:
+        await bot.send_message(telegram_id, text)
+    except TelegramRetryAfter as exc:
+        await asyncio.sleep(exc.retry_after)
+        try:
+            await bot.send_message(telegram_id, text)
+        except TelegramAPIError:
+            return False
+    except TelegramAPIError:
+        return False
+    return True
+
+
+async def _send_sticker_with_retry(
+    bot: Bot,
+    telegram_id: int,
+    sticker_file_id: str,
+) -> bool:
+    try:
+        await bot.send_sticker(telegram_id, sticker_file_id)
+    except TelegramRetryAfter as exc:
+        await asyncio.sleep(exc.retry_after)
+        try:
+            await bot.send_sticker(telegram_id, sticker_file_id)
+        except TelegramAPIError:
+            return False
+    except TelegramAPIError:
+        return False
+    return True

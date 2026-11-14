@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from aiogram import Bot
-from aiogram.enums import MessageEntityType
+from aiogram.enums import ChatType, MessageEntityType
+from aiogram.types import Chat, Message, MessageEntity
 
-from bot.handlers import StickerPackResponder, _custom_emoji_ids
+from bot.handlers import (
+    StickerPackResponder,
+    _custom_emoji_ids,
+    _message_html,
+    _send_sticker_with_retry,
+)
 
 
 class StickerTests(unittest.IsolatedAsyncioTestCase):
@@ -43,6 +50,35 @@ class StickerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(_custom_emoji_ids(message), ("emoji-123",))
+
+    async def test_custom_emoji_is_preserved_in_relay_html(self) -> None:
+        message = Message(
+            message_id=1,
+            date=datetime.now(timezone.utc),
+            chat=Chat(id=1, type=ChatType.PRIVATE),
+            text="🌸",
+            entities=[
+                MessageEntity(
+                    type=MessageEntityType.CUSTOM_EMOJI,
+                    offset=0,
+                    length=2,
+                    custom_emoji_id="5321445337074780874",
+                )
+            ],
+        )
+
+        self.assertEqual(
+            _message_html(message),
+            '<tg-emoji emoji-id="5321445337074780874">🌸</tg-emoji>',
+        )
+
+    async def test_broadcast_sticker_is_sent_by_file_id(self) -> None:
+        bot = AsyncMock(spec=Bot)
+
+        delivered = await _send_sticker_with_retry(bot, 101, "sticker-file-id")
+
+        self.assertTrue(delivered)
+        bot.send_sticker.assert_awaited_once_with(101, "sticker-file-id")
 
 
 if __name__ == "__main__":

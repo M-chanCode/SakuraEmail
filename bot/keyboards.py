@@ -199,9 +199,16 @@ def special_days_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def broadcast_confirmation_keyboard() -> InlineKeyboardMarkup:
+def broadcast_confirmation_keyboard(has_sticker: bool = False) -> InlineKeyboardMarkup:
+    sticker_text = "Заменить стикер" if has_sticker else "Добавить стикер"
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=sticker_text,
+                    callback_data="admin_broadcast_add_sticker",
+                )
+            ],
             [
                 InlineKeyboardButton(
                     text="Отменить",

@@ -12,6 +12,7 @@ class CreatorMessageStates(StatesGroup):
 
 class CreatorBroadcastStates(StatesGroup):
     waiting_for_message = State()
+    waiting_for_sticker = State()
     confirming = State()
     sending = State()
 

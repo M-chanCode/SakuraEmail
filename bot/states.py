@@ -17,6 +17,10 @@ class CreatorBroadcastStates(StatesGroup):
     sending = State()
 
 
+class UserIdMigrationStates(StatesGroup):
+    waiting_for_ids = State()
+
+
 class ThanksCommentStates(StatesGroup):
     waiting_for_comment = State()
 

@@ -74,6 +74,63 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.database.close_support_request(request_id), 101)
         self.assertIsNone(await self.database.close_support_request(request_id))
 
+    async def test_missing_username_does_not_erase_last_known_tag(self) -> None:
+        await self.database.upsert_user(
+            telegram_id=101,
+            username=None,
+            first_name="Sakura",
+            last_name="",
+            role="user",
+        )
+
+        user = await self.database.find_user_by_username("SakuraUser")
+        self.assertIsNotNone(user)
+        assert user is not None
+        self.assertEqual(user.telegram_id, 101)
+
+    async def test_user_id_migration_preserves_local_data(self) -> None:
+        request_id = await self.database.create_support_request(
+            101,
+            "SakuraUser",
+            "Нужна помощь",
+        )
+        gratitude_id = await self.database.record_thanks(101, "SakuraUser")
+        self.assertIsNotNone(gratitude_id)
+        await self.database.set_work_schedule(101, 8 * 60, 17 * 60)
+        await self.database.set_work_notifications_enabled(101, False)
+        await self.database.mark_work_reminder_handled(101, "2026-11-13", "sent")
+        await self.database.mark_short_day_notice_handled(101, "2026-11-14", "sent")
+        # The new account may already have opened the bot before the creator
+        # performs the migration. Its placeholder settings must not block the
+        # old employee settings from following the person.
+        await self.database.upsert_user(
+            telegram_id=202,
+            username="SakuraUser",
+            first_name="New Sakura",
+            last_name="",
+            role="user",
+        )
+        await self.database.set_work_schedule(202, 10 * 60, 19 * 60)
+        await self.database.replace_access_snapshot({202}, set())
+
+        self.assertTrue(await self.database.migrate_user_id(101, 202))
+
+        self.assertFalse(await self.database.user_exists(101))
+        self.assertTrue(await self.database.user_exists(202))
+        user = await self.database.find_user_by_username("sakurauser")
+        self.assertIsNotNone(user)
+        assert user is not None
+        self.assertEqual(user.telegram_id, 202)
+        self.assertEqual(await self.database.close_support_request(request_id), 202)
+        assert gratitude_id is not None
+        self.assertTrue(await self.database.can_comment_on_thanks(gratitude_id, 202))
+        settings = await self.database.get_work_settings(202)
+        self.assertEqual(settings.start_minutes, 8 * 60)
+        self.assertEqual(settings.end_minutes, 17 * 60)
+        self.assertFalse(settings.notifications_enabled)
+        self.assertEqual(await self.database.get_access_status(202), "allowed")
+        self.assertIsNone(await self.database.get_access_status(101))
+
     async def test_work_settings_use_defaults_and_persist_changes(self) -> None:
         settings = await self.database.get_work_settings(101)
         self.assertEqual(settings.start_minutes, 9 * 60)

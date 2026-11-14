@@ -163,6 +163,12 @@ def management_keyboard() -> InlineKeyboardMarkup:
                     callback_data="admin_refresh_access",
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    text="🔁 Перенести Telegram ID",
+                    callback_data="admin_migrate_user_id",
+                )
+            ],
             [InlineKeyboardButton(text="💌 Заявки", callback_data="admin_requests")],
             [
                 InlineKeyboardButton(

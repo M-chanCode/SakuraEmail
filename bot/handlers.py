@@ -56,6 +56,7 @@ from .states import (
     CreatorMessageStates,
     SpecialDayStates,
     ThanksCommentStates,
+    UserIdMigrationStates,
 )
 
 
@@ -468,6 +469,98 @@ def build_router(
                 )
             for text in _chunk_access_lines(lines):
                 await callback.message.answer(text)
+
+    @router.callback_query(F.data == "admin_migrate_user_id")
+    async def begin_user_id_migration(
+        callback: CallbackQuery,
+        state: FSMContext,
+        bot: Bot,
+    ) -> None:
+        if not _is_owner(callback.from_user, settings):
+            await callback.answer("Недостаточно прав", show_alert=True)
+            return
+        await callback.answer()
+        await _remove_action_prompt(bot, state)
+        await state.clear()
+        await state.set_state(UserIdMigrationStates.waiting_for_ids)
+        if callback.message is not None:
+            prompt = await callback.message.answer(
+                f"{SAKURA_1} <b>Перенос Telegram ID</b>\n\n"
+                "Сначала укажите новый ID сотрудника в рабочем списке. Затем "
+                "отправьте сюда старый и новый ID через пробел:\n"
+                "<code>111111111 222222222</code>\n\n"
+                "График, настройки уведомлений, заявки и благодарности будут "
+                "перенесены на новую учётную запись.",
+                reply_markup=cancel_action_keyboard(),
+            )
+            await _remember_action_prompt(state, prompt)
+
+    @router.message(UserIdMigrationStates.waiting_for_ids)
+    async def migrate_user_id(
+        message: Message,
+        state: FSMContext,
+        bot: Bot,
+    ) -> None:
+        user = _require_user(message.from_user)
+        if user.id != settings.owner_id:
+            return
+
+        ids = re.findall(r"\d+", message.text or "")
+        if len(ids) != 2:
+            await message.answer(
+                "Отправьте ровно два ID: сначала старый, затем новый.\n"
+                "Например: <code>111111111 222222222</code>",
+                reply_markup=cancel_action_keyboard(),
+            )
+            return
+        old_id, new_id = (int(value) for value in ids)
+        if old_id <= 0 or new_id <= 0 or old_id == new_id:
+            await message.answer(
+                "ID должны быть положительными и отличаться друг от друга. "
+                "Попробуйте ещё раз.",
+                reply_markup=cancel_action_keyboard(),
+            )
+            return
+        if not await database.user_exists(old_id):
+            await message.answer(
+                f"Старая запись <code>{old_id}</code> в боте не найдена. "
+                "Проверьте ID и попробуйте ещё раз.",
+                reply_markup=cancel_action_keyboard(),
+            )
+            return
+
+        summary = await access.refresh_now()
+        if summary is None:
+            await message.answer(
+                "Сейчас не удалось проверить новый ID. Попробуйте немного позже.",
+                reply_markup=cancel_action_keyboard(),
+            )
+            return
+        if await database.get_access_status(new_id) != "allowed":
+            await message.answer(
+                f"Новый ID <code>{new_id}</code> пока не допущен. Проверьте, "
+                "что он указан у сотрудника и не заблокирован, затем повторите.",
+                reply_markup=cancel_action_keyboard(),
+            )
+            return
+
+        if not await database.migrate_user_id(old_id, new_id):
+            await message.answer(
+                "Не удалось найти старую запись. Проверьте ID и повторите.",
+                reply_markup=cancel_action_keyboard(),
+            )
+            return
+
+        await _remove_action_prompt(bot, state)
+        await state.clear()
+        await message.answer(
+            f"{PINK_STARS} <b>Telegram ID перенесён</b>\n\n"
+            f"Старый: <code>{old_id}</code>\n"
+            f"Новый: <code>{new_id}</code>\n\n"
+            "Старая запись больше не будет появляться в списке «Не найдено». "
+            "Попросите сотрудника открыть бота и отправить /start.",
+            reply_markup=main_keyboard(True),
+        )
 
     @router.callback_query(F.data == "admin_requests")
     async def admin_requests(callback: CallbackQuery) -> None:

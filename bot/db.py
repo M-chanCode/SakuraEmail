@@ -202,7 +202,7 @@ class Database:
                     created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(telegram_id) DO UPDATE SET
-                    username = excluded.username,
+                    username = COALESCE(excluded.username, users.username),
                     first_name = excluded.first_name,
                     last_name = excluded.last_name,
                     role = excluded.role,
@@ -211,6 +211,105 @@ class Database:
                 (telegram_id, username, first_name, last_name, role, now, now),
             )
             await connection.commit()
+
+    async def migrate_user_id(self, old_id: int, new_id: int) -> bool:
+        """Move one registered bot identity to a new Telegram account ID."""
+        if old_id <= 0 or new_id <= 0 or old_id == new_id:
+            return False
+
+        connection = self._require_connection()
+        async with self._lock:
+            try:
+                await connection.execute("BEGIN IMMEDIATE")
+                source_cursor = await connection.execute(
+                    """
+                    SELECT username, first_name, last_name, role, created_at, updated_at
+                    FROM users
+                    WHERE telegram_id = ?
+                    """,
+                    (old_id,),
+                )
+                source = await source_cursor.fetchone()
+                await source_cursor.close()
+                if source is None:
+                    await connection.rollback()
+                    return False
+
+                await connection.execute(
+                    """
+                    INSERT OR IGNORE INTO users (
+                        telegram_id, username, first_name, last_name, role,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        new_id,
+                        source["username"],
+                        source["first_name"],
+                        source["last_name"],
+                        source["role"],
+                        source["created_at"],
+                        _utc_now(),
+                    ),
+                )
+
+                # Tables without a per-user uniqueness conflict can be moved directly.
+                for table in ("support_requests", "sent_notifications", "gratitudes"):
+                    await connection.execute(
+                        f"UPDATE {table} SET telegram_id = ? WHERE telegram_id = ?",
+                        (new_id, old_id),
+                    )
+
+                # The employee's existing schedule is more valuable than defaults that
+                # may have been created after the new account first opened the bot.
+                old_preferences_cursor = await connection.execute(
+                    "SELECT 1 FROM work_preferences WHERE telegram_id = ?",
+                    (old_id,),
+                )
+                has_old_preferences = await old_preferences_cursor.fetchone() is not None
+                await old_preferences_cursor.close()
+                if has_old_preferences:
+                    await connection.execute(
+                        "DELETE FROM work_preferences WHERE telegram_id = ?",
+                        (new_id,),
+                    )
+                    await connection.execute(
+                        "UPDATE work_preferences SET telegram_id = ? WHERE telegram_id = ?",
+                        (new_id, old_id),
+                    )
+
+                # Daily deduplication rows can overlap. Keep the new account's row on
+                # collisions and copy every other day from the old identity.
+                for table in ("work_reminders", "short_day_notices"):
+                    await connection.execute(
+                        f"""
+                        INSERT OR IGNORE INTO {table} (
+                            telegram_id, work_date, result, handled_at
+                        )
+                        SELECT ?, work_date, result, handled_at
+                        FROM {table}
+                        WHERE telegram_id = ?
+                        """,
+                        (new_id, old_id),
+                    )
+                    await connection.execute(
+                        f"DELETE FROM {table} WHERE telegram_id = ?",
+                        (old_id,),
+                    )
+
+                await connection.execute(
+                    "DELETE FROM access_snapshot WHERE telegram_id = ?",
+                    (old_id,),
+                )
+                await connection.execute(
+                    "DELETE FROM users WHERE telegram_id = ?",
+                    (old_id,),
+                )
+                await connection.commit()
+                return True
+            except Exception:
+                await connection.rollback()
+                raise
 
     async def user_exists(self, telegram_id: int) -> bool:
         connection = self._require_connection()

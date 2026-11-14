@@ -38,7 +38,6 @@ from .keyboards import (
     work_settings_keyboard,
 )
 from .states import WorkReportStates, WorkScheduleStates
-from .special_days import SpecialDayType
 
 
 _WEEKDAYS = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
@@ -97,7 +96,6 @@ def build_work_router(
             callback.message,
             state,
             bot,
-            database,
             api,
             callback.from_user.id,
             _moscow_today(),
@@ -152,7 +150,6 @@ def build_work_router(
             message,
             state,
             bot,
-            database,
             api,
             _require_user(message.from_user).id,
             report_date,
@@ -322,22 +319,6 @@ def build_work_router(
             await callback.answer("Данные отчёта потерялись. Заполните его ещё раз.", show_alert=True)
             return
 
-        parsed_report_date = _parse_date_key(report_date)
-        special_day = (
-            await database.get_special_day(parsed_report_date)
-            if parsed_report_date is not None
-            else None
-        )
-        if special_day is not None and special_day.day_type == SpecialDayType.HOLIDAY:
-            await state.clear()
-            await _disable_callback_markup(callback)
-            await callback.answer("Это нерабочий праздничный день", show_alert=True)
-            if callback.message is not None:
-                await callback.message.answer(
-                    "В этот день отчёт заполнять не нужно. Выберите другую дату."
-                )
-            return
-
         await callback.answer("Отправляю отчёт…")
         try:
             result = await api.save_work_report(callback.from_user.id, report_date, items)
@@ -499,7 +480,6 @@ async def _begin_report(
     source_message: Message,
     state: FSMContext,
     bot: Bot,
-    database: Database,
     api: SakuraAppsScriptApi,
     telegram_id: int,
     report_date: date,
@@ -507,13 +487,6 @@ async def _begin_report(
     if report_date > _moscow_today():
         await source_message.answer(
             "Отчёт за будущую дату заполнить нельзя. Выберите другую дату."
-        )
-        return
-    special_day = await database.get_special_day(report_date)
-    if special_day is not None and special_day.day_type == SpecialDayType.HOLIDAY:
-        await source_message.answer(
-            "Этот день отмечен как нерабочий праздник — отчёт заполнять не нужно. "
-            "Выберите другую дату."
         )
         return
     try:

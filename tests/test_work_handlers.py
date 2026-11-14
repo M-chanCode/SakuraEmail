@@ -2,14 +2,10 @@ from __future__ import annotations
 
 import unittest
 from datetime import date
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 from bot.api import WorkReportItem, WorkType
 from bot.decor import DECORATION_DOT, SAKURA_1, SAKURA_3, SAKURA_4
-from bot.special_days import SpecialDay, SpecialDayType
 from bot.work_handlers import (
-    _begin_report,
     format_existing_report,
     format_report_date_label,
     format_report_date_label_html,
@@ -19,34 +15,6 @@ from bot.work_handlers import (
     parse_report_text,
     parse_schedule,
 )
-
-
-class WorkReportHolidayTests(unittest.IsolatedAsyncioTestCase):
-    async def test_holiday_is_rejected_before_apps_script_request(self) -> None:
-        report_date = date(2026, 10, 12)
-        source_message = SimpleNamespace(answer=AsyncMock())
-        state = AsyncMock()
-        bot = AsyncMock()
-        database = AsyncMock()
-        database.get_special_day.return_value = SpecialDay(
-            report_date,
-            SpecialDayType.HOLIDAY,
-        )
-        api = AsyncMock()
-
-        await _begin_report(
-            source_message,
-            state,
-            bot,
-            database,
-            api,
-            101,
-            report_date,
-        )
-
-        api.get_work_report_context.assert_not_awaited()
-        source_message.answer.assert_awaited_once()
-        self.assertIn("отчёт заполнять не нужно", source_message.answer.await_args.args[0])
 
 
 class WorkReportParsingTests(unittest.TestCase):

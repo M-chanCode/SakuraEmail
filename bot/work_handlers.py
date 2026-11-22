@@ -373,7 +373,13 @@ def build_work_router(
     async def open_settings(message: Message) -> None:
         user = _require_user(message.from_user)
         await _save_user(database, user, user.id == settings.owner_id)
-        await _send_settings(message, user.id, database, api)
+        await _send_settings(
+            message,
+            user.id,
+            database,
+            api,
+            is_art_director=user.id == settings.art_director_id,
+        )
 
     @router.callback_query(F.data == "work_schedule_change")
     async def begin_schedule_change(
@@ -419,7 +425,13 @@ def build_work_router(
         await _remove_action_prompt(bot, state)
         await state.clear()
         await message.answer(f"График сохранён {PINK_STARS}")
-        await _send_settings(message, user.id, database, api)
+        await _send_settings(
+            message,
+            user.id,
+            database,
+            api,
+            is_art_director=user.id == settings.art_director_id,
+        )
 
     @router.callback_query(F.data == "work_notifications_toggle")
     async def toggle_work_notifications(callback: CallbackQuery) -> None:
@@ -445,7 +457,11 @@ def build_work_router(
             profile = None
         if callback.message is not None and profile is not None:
             await callback.message.edit_text(
-                _format_settings(profile, updated),
+                _format_settings(
+                    profile,
+                    updated,
+                    is_art_director=callback.from_user.id == settings.art_director_id,
+                ),
                 reply_markup=work_settings_keyboard(updated.notifications_enabled),
             )
         elif callback.message is not None:
@@ -537,6 +553,7 @@ async def _send_settings(
     telegram_id: int,
     database: Database,
     api: SakuraAppsScriptApi,
+    is_art_director: bool = False,
 ) -> None:
     try:
         profile = await api.get_work_profile(telegram_id)
@@ -548,7 +565,7 @@ async def _send_settings(
         return
     work_settings = await database.get_work_settings(telegram_id)
     await message.answer(
-        _format_settings(profile, work_settings),
+        _format_settings(profile, work_settings, is_art_director=is_art_director),
         reply_markup=work_settings_keyboard(work_settings.notifications_enabled),
     )
 
@@ -686,17 +703,23 @@ def format_existing_report(
     return "\n".join(lines)
 
 
-def _format_settings(profile: WorkProfile, work_settings: WorkSettings) -> str:
+def _format_settings(
+    profile: WorkProfile,
+    work_settings: WorkSettings,
+    is_art_director: bool = False,
+) -> str:
     notifications = "включены" if work_settings.notifications_enabled else "выключены"
+    role_text = "\nРоль: <b>Арт-директор</b>" if is_art_director else ""
     return (
-        f"{MINIMAL_FLOWER} <b>{escape(profile.display_name or profile.full_name)}</b>\n\n"
+        f"{MINIMAL_FLOWER} <b>{escape(profile.display_name or profile.full_name)}</b>"
+        f"{role_text}\n\n"
         f"График: {_format_minutes(work_settings.start_minutes)}–"
         f"{_format_minutes(work_settings.end_minutes)} мск\n"
         f"Уведомления: {notifications}\n\n"
         "<b>Баллы</b>\n"
         f"Сегодня: {_format_points(profile.today_points)}\n"
         f"За неделю: {_format_points(profile.week_points)}\n"
-        f"За месяц: {_format_points(profile.month_points)}"
+        f"За месяц (25–24): {_format_points(profile.month_points)}"
     )
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import random
 import re
+from datetime import datetime
 from html import escape
 from typing import Any
 
@@ -16,7 +17,7 @@ from aiogram.exceptions import (
 )
 from aiogram.filters import BaseFilter, Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message, User
+from aiogram.types import BufferedInputFile, CallbackQuery, Message, User
 
 from .access import AccessController, AccessDecision
 from .api import SakuraApiError, SakuraAppsScriptApi
@@ -33,6 +34,7 @@ from .decor import (
     SAKURA_ANIMATED,
 )
 from .formatting import display_license_type, format_datetime
+from .formatting import MOSCOW_TIMEZONE
 from .keyboards import (
     KEYS_TEXT,
     LEGACY_REQUEST_KEY_TEXT,
@@ -50,6 +52,7 @@ from .keyboards import (
     thanks_settings_keyboard,
 )
 from .special_days import format_special_days, parse_special_day_changes
+from .points_reports import build_points_csv, format_period, points_period_for_day
 from .states import (
     ApplicationStates,
     CreatorBroadcastStates,
@@ -430,6 +433,35 @@ def build_router(
                 f"Пользователей: {users_count}\n"
                 f"Открытых заявок: {pending_count}"
             )
+
+    @router.callback_query(F.data == "admin_points_preview")
+    async def admin_points_preview(callback: CallbackQuery) -> None:
+        if not _is_owner(callback.from_user, settings):
+            await callback.answer("Недостаточно прав", show_alert=True)
+            return
+        await callback.answer("Готовлю предварительный отчёт…")
+        if callback.message is None:
+            return
+
+        period = points_period_for_day(datetime.now(MOSCOW_TIMEZONE).date())
+        try:
+            report = await api.get_points_report(
+                period.start.isoformat(),
+                period.end.isoformat(),
+            )
+        except SakuraApiError:
+            await callback.message.answer(
+                "Сейчас не удалось подготовить отчёт по баллам. Попробуйте немного позже."
+            )
+            return
+
+        await callback.message.answer_document(
+            BufferedInputFile(build_points_csv(report.rows), filename=period.filename),
+            caption=(
+                f"{PINK_STARS} <b>Предварительные баллы</b>\n"
+                f"Период: <code>{format_period(period)}</code>"
+            ),
+        )
 
     @router.callback_query(F.data == "admin_refresh_access")
     async def admin_refresh_access(callback: CallbackQuery) -> None:

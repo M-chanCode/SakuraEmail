@@ -105,6 +105,19 @@ class MissingReportsResult:
 
 
 @dataclass(frozen=True, slots=True)
+class PointsReportRow:
+    full_name: str
+    points: float
+
+
+@dataclass(frozen=True, slots=True)
+class PointsReport:
+    start_date: str
+    end_date: str
+    rows: tuple[PointsReportRow, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class WorkReportSaveResult:
     saved: bool
     message: str
@@ -382,6 +395,39 @@ class SakuraAppsScriptApi:
         return MissingReportsResult(
             employee_found=payload.get("employee_found") is True,
             missing_dates=missing_dates,
+        )
+
+    async def get_points_report(
+        self,
+        start_date: str,
+        end_date: str,
+    ) -> PointsReport:
+        payload = await self._post(
+            "bot_points_report",
+            start_date=start_date,
+            end_date=end_date,
+        )
+        raw_rows = payload.get("rows", [])
+        if not isinstance(raw_rows, list):
+            raise SakuraApiUnavailable("Apps Script returned invalid points rows")
+
+        rows: list[PointsReportRow] = []
+        for raw_row in raw_rows:
+            if not isinstance(raw_row, dict):
+                continue
+            full_name = str(raw_row.get("full_name", "")).strip()
+            if not full_name:
+                continue
+            rows.append(
+                PointsReportRow(
+                    full_name=full_name,
+                    points=_safe_float(raw_row.get("points")),
+                )
+            )
+        return PointsReport(
+            start_date=str(payload.get("start_date", start_date)).strip(),
+            end_date=str(payload.get("end_date", end_date)).strip(),
+            rows=tuple(rows),
         )
 
     async def save_work_report(

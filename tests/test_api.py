@@ -7,6 +7,8 @@ from bot.api import (
     AccessDirectoryEntry,
     AccessSnapshot,
     MissingReportsResult,
+    PointsReport,
+    PointsReportRow,
     SakuraApiUnavailable,
     SakuraAppsScriptApi,
     WorkCatalog,
@@ -340,6 +342,36 @@ class ApiParsingTests(unittest.IsolatedAsyncioTestCase):
             "bot_missing_reports",
             telegram_id="101",
             report_dates=requested,
+        )
+
+    async def test_points_report_is_parsed_and_requested_for_exact_period(self) -> None:
+        api = SakuraAppsScriptApi("https://example.com/exec", "x" * 32)
+        api._post = AsyncMock(
+            return_value={
+                "start_date": "2026-10-25",
+                "end_date": "2026-11-24",
+                "rows": [
+                    {"full_name": " Иванова Анна ", "points": "12.5"},
+                    {"full_name": "", "points": 99},
+                    "bad row",
+                ],
+            }
+        )
+
+        report = await api.get_points_report("2026-10-25", "2026-11-24")
+
+        self.assertEqual(
+            report,
+            PointsReport(
+                start_date="2026-10-25",
+                end_date="2026-11-24",
+                rows=(PointsReportRow(full_name="Иванова Анна", points=12.5),),
+            ),
+        )
+        api._post.assert_awaited_once_with(
+            "bot_points_report",
+            start_date="2026-10-25",
+            end_date="2026-11-24",
         )
 
     async def test_work_report_rejects_invalid_items_collection(self) -> None:

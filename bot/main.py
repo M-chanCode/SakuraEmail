@@ -15,6 +15,7 @@ from .config import ConfigurationError, Settings
 from .db import Database
 from .handlers import build_router
 from .notifications import notification_worker
+from .points_notifications import points_report_notification_worker
 from .work_handlers import build_work_router
 from .work_notifications import work_report_notification_worker
 
@@ -61,13 +62,22 @@ async def main() -> None:
     work_worker = asyncio.create_task(
         work_report_notification_worker(bot, api, database, access)
     )
+    points_worker = asyncio.create_task(
+        points_report_notification_worker(bot, api, database, settings)
+    )
 
     try:
         await dispatcher.start_polling(bot)
     finally:
         renewal_worker.cancel()
         work_worker.cancel()
-        await asyncio.gather(renewal_worker, work_worker, return_exceptions=True)
+        points_worker.cancel()
+        await asyncio.gather(
+            renewal_worker,
+            work_worker,
+            points_worker,
+            return_exceptions=True,
+        )
         await bot.session.close()
         await api.close()
         await database.close()

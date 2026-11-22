@@ -268,7 +268,7 @@ function botGetWorkProfile_(payload) {
   const tomorrowKey = botReportDateKey_(botAddCalendarDays_(today, 1));
   const weekdayFromMonday = (today.getUTCDay() + 6) % 7;
   const weekStartKey = botReportDateKey_(botAddCalendarDays_(today, -weekdayFromMonday));
-  const monthStartKey = todayKey.substring(0, 8) + '01';
+  const pointsPeriod = botPointsPeriodForDate_(today);
 
   return {
     ok: true,
@@ -279,8 +279,83 @@ function botGetWorkProfile_(payload) {
     stats: {
       today: botCalculatePoints_(transactions, multiplierMap, telegramId, todayKey, tomorrowKey),
       week: botCalculatePoints_(transactions, multiplierMap, telegramId, weekStartKey, tomorrowKey),
-      month: botCalculatePoints_(transactions, multiplierMap, telegramId, monthStartKey, tomorrowKey)
+      month: botCalculatePoints_(
+        transactions,
+        multiplierMap,
+        telegramId,
+        pointsPeriod.startKey,
+        tomorrowKey
+      )
     }
+  };
+}
+
+function botGetPointsReport_(payload) {
+  if (!botIsAuthorized_(payload)) {
+    return {
+      ok: false,
+      message: 'unauthorized'
+    };
+  }
+
+  const startDate = botParseReportDate_(payload.start_date || '');
+  const endDate = botParseReportDate_(payload.end_date || '');
+  if (!startDate || !endDate || endDate.getTime() < startDate.getTime()) {
+    return {
+      ok: false,
+      message: 'invalid_points_period'
+    };
+  }
+
+  const daysInRange = Math.round(
+    (endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)
+  ) + 1;
+  if (daysInRange > 62) {
+    return {
+      ok: false,
+      message: 'points_period_too_long'
+    };
+  }
+
+  const databaseTable = getTable_(DATABASE_SHEET_NAMES);
+  const databaseDefinitions = databaseColumns_();
+  const databaseColumns = getRequiredColumns_(databaseTable.headers, {
+    fio: databaseDefinitions.fio,
+    telegramId: databaseDefinitions.telegramId
+  }, databaseTable.sheet.getName());
+  const multiplierMap = botMultiplierMap_(botReadMultiplierCatalog_());
+  const transactions = botReadWorkTransactions_();
+  const startKey = botReportDateKey_(startDate);
+  const endExclusiveKey = botReportDateKey_(botAddCalendarDays_(endDate, 1));
+  const seenTelegramIds = Object.create(null);
+  const rows = [];
+
+  for (const worker of databaseTable.rows) {
+    const telegramId = normalizeTelegramId_(cell_(worker, databaseColumns.telegramId));
+    const fullName = String(cell_(worker, databaseColumns.fio) || '').trim();
+    if (!telegramId || !fullName || seenTelegramIds[telegramId]) {
+      continue;
+    }
+    seenTelegramIds[telegramId] = true;
+    rows.push({
+      telegram_id: telegramId,
+      full_name: fullName,
+      points: botCalculatePoints_(
+        transactions,
+        multiplierMap,
+        telegramId,
+        startKey,
+        endExclusiveKey
+      )
+    });
+  }
+
+  rows.sort((left, right) => left.full_name.localeCompare(right.full_name, 'ru'));
+  return {
+    ok: true,
+    start_date: startKey,
+    end_date: botReportDateKey_(endDate),
+    rows
   };
 }
 
@@ -740,6 +815,22 @@ function botCalculatePoints_(transactions, multiplierMap, telegramId, startDateK
   }
 
   return Math.round(total * 10000) / 10000;
+}
+
+function botPointsPeriodForDate_(calendarDate) {
+  const year = calendarDate.getUTCFullYear();
+  const month = calendarDate.getUTCMonth();
+  const day = calendarDate.getUTCDate();
+  const start = day <= 24
+    ? new Date(Date.UTC(year, month - 1, 25))
+    : new Date(Date.UTC(year, month, 25));
+  const end = day <= 24
+    ? new Date(Date.UTC(year, month, 24))
+    : new Date(Date.UTC(year, month + 1, 24));
+  return {
+    startKey: botReportDateKey_(start),
+    endKey: botReportDateKey_(end)
+  };
 }
 
 function botReplaceWorkReport_(telegramId, reportDate, items) {

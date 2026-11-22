@@ -15,6 +15,7 @@ class ConfigurationError(RuntimeError):
 class Settings:
     bot_token: str
     owner_id: int
+    art_director_id: int
     apps_script_url: str
     bot_api_secret: str
     database_path: Path
@@ -26,6 +27,7 @@ class Settings:
 
         bot_token = _required("BOT_TOKEN")
         owner_id_text = _required("BOT_OWNER_ID")
+        art_director_id_text = _required("BOT_ART_DIRECTOR_ID")
         apps_script_url = _required("APPS_SCRIPT_URL")
         bot_api_secret = _required("BOT_API_SECRET")
 
@@ -33,6 +35,12 @@ class Settings:
             owner_id = int(owner_id_text)
         except ValueError as exc:
             raise ConfigurationError("BOT_OWNER_ID must be an integer") from exc
+        try:
+            art_director_id = int(art_director_id_text)
+        except ValueError as exc:
+            raise ConfigurationError("BOT_ART_DIRECTOR_ID must be an integer") from exc
+        if owner_id <= 0 or art_director_id <= 0:
+            raise ConfigurationError("Telegram IDs must be positive integers")
 
         if not apps_script_url.startswith("https://") or not apps_script_url.endswith("/exec"):
             raise ConfigurationError("APPS_SCRIPT_URL must be the HTTPS Web App URL ending in /exec")
@@ -52,6 +60,7 @@ class Settings:
         return cls(
             bot_token=bot_token,
             owner_id=owner_id,
+            art_director_id=art_director_id,
             apps_script_url=apps_script_url,
             bot_api_secret=bot_api_secret,
             database_path=database_path,
@@ -64,4 +73,3 @@ def _required(name: str) -> str:
     if not value:
         raise ConfigurationError(f"Environment variable {name} is required")
     return value
-

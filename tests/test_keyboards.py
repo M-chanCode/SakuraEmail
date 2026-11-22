@@ -42,6 +42,14 @@ class KeyboardTests(unittest.TestCase):
         ]
         self.assertIn("admin_migrate_user_id", callbacks)
 
+    def test_management_has_preliminary_points_report(self) -> None:
+        callbacks = [
+            button.callback_data
+            for row in management_keyboard().inline_keyboard
+            for button in row
+        ]
+        self.assertIn("admin_points_preview", callbacks)
+
     def test_broadcast_preview_can_add_or_replace_sticker(self) -> None:
         without_sticker = broadcast_confirmation_keyboard()
         with_sticker = broadcast_confirmation_keyboard(has_sticker=True)

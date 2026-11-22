@@ -16,7 +16,7 @@ from .decor import PINK_STARS, SAKURA_ANIMATED
 from .formatting import MOSCOW_TIMEZONE
 from .points_reports import (
     PointsPeriod,
-    build_points_csv,
+    build_points_workbook,
     format_period,
     points_period_for_day,
 )
@@ -79,7 +79,7 @@ async def deliver_monthly_points_reports(
     except SakuraApiError:
         logger.warning("Monthly points report API is temporarily unavailable")
         return
-    document_bytes = build_points_csv(report.rows)
+    document_bytes = build_points_workbook(report.rows)
 
     for telegram_id in pending_recipients:
         if not await database.user_exists(telegram_id):
@@ -115,7 +115,7 @@ async def deliver_monthly_points_reports(
         except (TelegramForbiddenError, TelegramBadRequest):
             continue
         except TelegramAPIError:
-            logger.warning("Telegram failed to deliver points CSV to %s", telegram_id)
+            logger.warning("Telegram failed to deliver points workbook to %s", telegram_id)
             continue
         await database.mark_notification_sent(document_hash, telegram_id)
 

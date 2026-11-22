@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-import csv
 import io
 from dataclasses import dataclass
 from datetime import date
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 
 from .api import PointsReportRow
 
@@ -33,7 +35,7 @@ class PointsPeriod:
     @property
     def filename(self) -> str:
         month = RUSSIAN_MONTHS[self.report_month.month - 1]
-        return f"{month}_Баллы_{self.report_month.year}.csv"
+        return f"{month}_Баллы_{self.report_month.year}.xlsx"
 
 
 def points_period_for_day(today: date) -> PointsPeriod:
@@ -54,13 +56,32 @@ def points_period_for_day(today: date) -> PointsPeriod:
     )
 
 
-def build_points_csv(rows: tuple[PointsReportRow, ...]) -> bytes:
-    output = io.StringIO(newline="")
-    writer = csv.writer(output, delimiter=";", lineterminator="\r\n")
-    writer.writerow(("ФИО", "Баллы"))
+def build_points_workbook(rows: tuple[PointsReportRow, ...]) -> bytes:
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Баллы"
+    worksheet.append(("ФИО", "Баллы"))
     for row in sorted(rows, key=lambda item: item.full_name.casefold()):
-        writer.writerow((row.full_name, format_points(row.points)))
-    return output.getvalue().encode("utf-8-sig")
+        worksheet.append((row.full_name, row.points))
+
+    worksheet.column_dimensions["A"].width = 48
+    worksheet.column_dimensions["B"].width = 12
+    worksheet.freeze_panes = "A2"
+    worksheet.auto_filter.ref = worksheet.dimensions
+
+    header_fill = PatternFill(fill_type="solid", fgColor="F4C2D7")
+    for cell in worksheet[1]:
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    for cell in worksheet["B"][1:]:
+        cell.number_format = "0.####"
+        cell.alignment = Alignment(horizontal="center")
+
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
 
 
 def format_points(value: float) -> str:

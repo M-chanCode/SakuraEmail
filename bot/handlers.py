@@ -52,7 +52,7 @@ from .keyboards import (
     thanks_settings_keyboard,
 )
 from .special_days import format_special_days, parse_special_day_changes
-from .points_reports import build_points_csv, format_period, points_period_for_day
+from .points_reports import build_points_workbook, format_period, points_period_for_day
 from .states import (
     ApplicationStates,
     CreatorBroadcastStates,
@@ -456,7 +456,7 @@ def build_router(
             return
 
         await callback.message.answer_document(
-            BufferedInputFile(build_points_csv(report.rows), filename=period.filename),
+            BufferedInputFile(build_points_workbook(report.rows), filename=period.filename),
             caption=(
                 f"{PINK_STARS} <b>Предварительные баллы</b>\n"
                 f"Период: <code>{format_period(period)}</code>"

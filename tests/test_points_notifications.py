@@ -75,7 +75,7 @@ class MonthlyPointsNotificationTests(unittest.IsolatedAsyncioTestCase):
             call.kwargs["document"].filename
             for call in self.bot.send_document.await_args_list
         }
-        self.assertEqual(filenames, {"Ноябрь_Баллы_2026.csv"})
+        self.assertEqual(filenames, {"Ноябрь_Баллы_2026.xlsx"})
 
         await deliver_monthly_points_reports(
             self.bot,

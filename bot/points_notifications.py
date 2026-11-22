@@ -79,7 +79,7 @@ async def deliver_points_deadline_reminders(
         logger.warning("Points deadline reminder recipients could not be verified")
         return
 
-    excluded_ids = {settings.owner_id, settings.art_director_id}
+    excluded_ids = {settings.art_director_id}
     recipients = [user for user in users if user.telegram_id not in excluded_ids]
     if not recipients:
         return

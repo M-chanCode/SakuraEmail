@@ -148,18 +148,25 @@ class MonthlyPointsNotificationTests(unittest.IsolatedAsyncioTestCase):
             self.access,
             due,
         )
-        self.api.get_missing_work_report_dates.assert_awaited_once()
-        telegram_id, report_dates = self.api.get_missing_work_report_dates.await_args.args
-        self.assertEqual(telegram_id, 303)
+        self.assertEqual(self.api.get_missing_work_report_dates.await_count, 2)
+        requests = {
+            call.args[0]: call.args[1]
+            for call in self.api.get_missing_work_report_dates.await_args_list
+        }
+        self.assertEqual(set(requests), {101, 303})
+        report_dates = requests[303]
         self.assertNotIn("2026-11-22", report_dates)
         self.assertNotIn("2026-11-23", report_dates)
         self.assertIn("2026-11-21", report_dates)
-        self.bot.send_message.assert_awaited_once()
-        call = self.bot.send_message.await_args
-        self.assertEqual(call.args[0], 303)
-        self.assertIn("<blockquote expandable>", call.args[1])
-        self.assertIn("20.11.2026", call.args[1])
-        self.assertIn("21.11.2026", call.args[1])
+        self.assertEqual(self.bot.send_message.await_count, 2)
+        messages = {
+            call.args[0]: call.args[1]
+            for call in self.bot.send_message.await_args_list
+        }
+        self.assertEqual(set(messages), {101, 303})
+        self.assertIn("<blockquote expandable>", messages[303])
+        self.assertIn("20.11.2026", messages[303])
+        self.assertIn("21.11.2026", messages[303])
 
         await deliver_points_deadline_reminders(
             self.bot,
@@ -169,7 +176,7 @@ class MonthlyPointsNotificationTests(unittest.IsolatedAsyncioTestCase):
             self.access,
             due,
         )
-        self.bot.send_message.assert_awaited_once()
+        self.assertEqual(self.bot.send_message.await_count, 2)
 
 
 if __name__ == "__main__":

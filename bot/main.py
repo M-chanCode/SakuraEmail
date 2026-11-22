@@ -63,7 +63,7 @@ async def main() -> None:
         work_report_notification_worker(bot, api, database, access)
     )
     points_worker = asyncio.create_task(
-        points_report_notification_worker(bot, api, database, settings)
+        points_report_notification_worker(bot, api, database, settings, access)
     )
 
     try:

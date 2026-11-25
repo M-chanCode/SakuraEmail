@@ -21,6 +21,11 @@ class UserIdMigrationStates(StatesGroup):
     waiting_for_ids = State()
 
 
+class EmployeePointsStates(StatesGroup):
+    waiting_for_month = State()
+    waiting_for_username = State()
+
+
 class ThanksCommentStates(StatesGroup):
     waiting_for_comment = State()
 

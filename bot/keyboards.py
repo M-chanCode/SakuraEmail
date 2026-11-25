@@ -14,14 +14,16 @@ KEYS_TEXT = "Ключи"
 MY_KEYS_TEXT = "Мои ключи"
 LEGACY_REQUEST_KEY_TEXT = "🌸 Запросить ключ"
 SETTINGS_TEXT = "Настройки"
+CABINET_TEXT = "Кабинет"
 THANKS_TEXT = "Спасибо!"
 MANAGEMENT_TEXT = "⚙️ Управление"
 
 
 def main_keyboard(is_creator: bool) -> ReplyKeyboardMarkup:
+    settings_text = SETTINGS_TEXT if is_creator else CABINET_TEXT
     rows = [
         [KeyboardButton(text=REPORT_TEXT), KeyboardButton(text=KEYS_TEXT)],
-        [KeyboardButton(text=SETTINGS_TEXT), KeyboardButton(text=THANKS_TEXT)],
+        [KeyboardButton(text=settings_text), KeyboardButton(text=THANKS_TEXT)],
     ]
     if is_creator:
         rows.append([KeyboardButton(text=MANAGEMENT_TEXT)])
@@ -157,6 +159,12 @@ def management_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
+            [
+                InlineKeyboardButton(
+                    text="🌸 Посмотреть баллы",
+                    callback_data="admin_employee_points",
+                )
+            ],
             [
                 InlineKeyboardButton(
                     text="🌸 Предварительные баллы",

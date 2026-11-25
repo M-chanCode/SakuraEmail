@@ -359,6 +359,121 @@ function botGetPointsReport_(payload) {
   };
 }
 
+function botGetEmployeePointsDetail_(payload) {
+  if (!botIsAuthorized_(payload)) {
+    return {
+      ok: false,
+      message: 'unauthorized'
+    };
+  }
+
+  const telegramId = normalizeTelegramId_(payload.telegram_id || '');
+  const startDate = botParseReportDate_(payload.start_date || '');
+  const endDate = botParseReportDate_(payload.end_date || '');
+  if (!telegramId || !startDate || !endDate || endDate.getTime() < startDate.getTime()) {
+    return {
+      ok: false,
+      message: 'invalid_employee_points_request'
+    };
+  }
+
+  const daysInRange = Math.round(
+    (endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)
+  ) + 1;
+  if (daysInRange > 62) {
+    return {
+      ok: false,
+      message: 'points_period_too_long'
+    };
+  }
+
+  const databaseTable = getTable_(DATABASE_SHEET_NAMES);
+  const databaseDefinitions = databaseColumns_();
+  const databaseColumns = getRequiredColumns_(databaseTable.headers, {
+    fio: databaseDefinitions.fio,
+    telegramId: databaseDefinitions.telegramId
+  }, databaseTable.sheet.getName());
+  const worker = botFindWorkerByTelegramId_(
+    databaseTable.rows,
+    databaseColumns,
+    telegramId
+  );
+  const startKey = botReportDateKey_(startDate);
+  const endKey = botReportDateKey_(endDate);
+  if (!worker) {
+    return {
+      ok: true,
+      employee_found: false,
+      telegram_id: telegramId,
+      full_name: '',
+      start_date: startKey,
+      end_date: endKey,
+      total_points: 0,
+      rows: []
+    };
+  }
+
+  const endExclusiveKey = botReportDateKey_(botAddCalendarDays_(endDate, 1));
+  const transactions = botReadWorkTransactions_();
+  const multiplierMap = botMultiplierMap_(botReadMultiplierCatalog_());
+  const grouped = Object.create(null);
+
+  for (const transaction of transactions) {
+    if (transaction.telegramId !== telegramId) {
+      continue;
+    }
+    const reportDate = botReportDateKey_(transaction.date);
+    if (reportDate < startKey || reportDate >= endExclusiveKey) {
+      continue;
+    }
+    const groupKey = reportDate + '\u0000' + transaction.article;
+    if (!Object.prototype.hasOwnProperty.call(grouped, groupKey)) {
+      grouped[groupKey] = {
+        report_date: reportDate,
+        article: transaction.article,
+        quantity: 0
+      };
+    }
+    grouped[groupKey].quantity += transaction.quantity;
+  }
+
+  const rows = Object.keys(grouped).map(groupKey => {
+    const item = grouped[groupKey];
+    const coefficient = Object.prototype.hasOwnProperty.call(multiplierMap, item.article)
+      ? multiplierMap[item.article]
+      : 0;
+    return {
+      report_date: item.report_date,
+      article: item.article,
+      quantity: item.quantity,
+      points: Math.round(item.quantity * coefficient * 10000) / 10000
+    };
+  });
+  rows.sort((left, right) => {
+    if (left.report_date !== right.report_date) {
+      return left.report_date < right.report_date ? -1 : 1;
+    }
+    return left.article.localeCompare(right.article, 'ru');
+  });
+
+  return {
+    ok: true,
+    employee_found: true,
+    telegram_id: telegramId,
+    full_name: String(cell_(worker, databaseColumns.fio) || '').trim(),
+    start_date: startKey,
+    end_date: endKey,
+    total_points: botCalculatePoints_(
+      transactions,
+      multiplierMap,
+      telegramId,
+      startKey,
+      endExclusiveKey
+    ),
+    rows
+  };
+}
+
 function botGetReportCatalog_(payload) {
   if (!botIsAuthorized_(payload)) {
     return {

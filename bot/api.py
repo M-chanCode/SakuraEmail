@@ -118,6 +118,25 @@ class PointsReport:
 
 
 @dataclass(frozen=True, slots=True)
+class EmployeePointsRow:
+    report_date: str
+    article: str
+    quantity: int
+    points: float
+
+
+@dataclass(frozen=True, slots=True)
+class EmployeePointsDetail:
+    employee_found: bool
+    telegram_id: int
+    full_name: str
+    start_date: str
+    end_date: str
+    total_points: float
+    rows: tuple[EmployeePointsRow, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class WorkReportSaveResult:
     saved: bool
     message: str
@@ -427,6 +446,50 @@ class SakuraAppsScriptApi:
         return PointsReport(
             start_date=str(payload.get("start_date", start_date)).strip(),
             end_date=str(payload.get("end_date", end_date)).strip(),
+            rows=tuple(rows),
+        )
+
+    async def get_employee_points_detail(
+        self,
+        telegram_id: int,
+        start_date: str,
+        end_date: str,
+    ) -> EmployeePointsDetail:
+        payload = await self._post(
+            "bot_employee_points_detail",
+            telegram_id=str(telegram_id),
+            start_date=start_date,
+            end_date=end_date,
+        )
+        raw_rows = payload.get("rows", [])
+        if not isinstance(raw_rows, list):
+            raise SakuraApiUnavailable("Apps Script returned invalid employee points rows")
+
+        rows: list[EmployeePointsRow] = []
+        for raw_row in raw_rows:
+            if not isinstance(raw_row, dict):
+                continue
+            report_date = str(raw_row.get("report_date", "")).strip()
+            article = str(raw_row.get("article", "")).strip().upper()
+            quantity = _safe_int(raw_row.get("quantity"))
+            if not report_date or not article or quantity <= 0:
+                continue
+            rows.append(
+                EmployeePointsRow(
+                    report_date=report_date,
+                    article=article,
+                    quantity=quantity,
+                    points=_safe_float(raw_row.get("points")),
+                )
+            )
+
+        return EmployeePointsDetail(
+            employee_found=payload.get("employee_found") is True,
+            telegram_id=_safe_int(payload.get("telegram_id")),
+            full_name=str(payload.get("full_name", "")).strip(),
+            start_date=str(payload.get("start_date", start_date)).strip(),
+            end_date=str(payload.get("end_date", end_date)).strip(),
+            total_points=_safe_float(payload.get("total_points")),
             rows=tuple(rows),
         )
 

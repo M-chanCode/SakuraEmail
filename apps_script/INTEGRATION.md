@@ -115,6 +115,10 @@ if (action === 'bot_points_report') {
   return json_(botGetPointsReport_(payload));
 }
 
+if (action === 'bot_employee_points_detail') {
+  return json_(botGetEmployeePointsDetail_(payload));
+}
+
 if (action === 'bot_work_profile') {
   return json_(botGetWorkProfile_(payload));
 }
@@ -175,6 +179,13 @@ ID с отметкой `Заблокирован` в столбце B не по�
 строке на сотрудника с заполненными ФИО и Telegram ID: `full_name` и сумму
 `points` за указанный период включительно. Итог считается по текущим
 коэффициентам из листа `Множители`.
+
+### `bot_employee_points_detail`
+
+Принимает `telegram_id`, `start_date` и `end_date`. Возвращает ФИО сотрудника,
+общую сумму баллов и детализацию за период по датам и артикулам. Количество
+одинаковых артикулов за один день объединяется, а баллы рассчитываются по
+текущим коэффициентам.
 
 ### `bot_work_profile`
 

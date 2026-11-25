@@ -24,6 +24,7 @@ from .decor import (
 )
 from .formatting import MOSCOW_TIMEZONE
 from .keyboards import (
+    CABINET_TEXT,
     KEYS_TEXT,
     LEGACY_REPORT_TEXT,
     MANAGEMENT_TEXT,
@@ -46,6 +47,7 @@ _NAVIGATION_TEXTS = {
     LEGACY_REPORT_TEXT,
     KEYS_TEXT,
     SETTINGS_TEXT,
+    CABINET_TEXT,
     THANKS_TEXT,
     MANAGEMENT_TEXT,
 }
@@ -369,7 +371,7 @@ def build_work_router(
                 reply_markup=main_keyboard(callback.from_user.id == settings.owner_id),
             )
 
-    @router.message(StateFilter(None), F.text == SETTINGS_TEXT)
+    @router.message(StateFilter(None), F.text.in_({SETTINGS_TEXT, CABINET_TEXT}))
     async def open_settings(message: Message) -> None:
         user = _require_user(message.from_user)
         await _save_user(database, user, user.id == settings.owner_id)

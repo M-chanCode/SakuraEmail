@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock
 from bot.api import (
     AccessDirectoryEntry,
     AccessSnapshot,
+    EmployeePointsDetail,
+    EmployeePointsRow,
     MissingReportsResult,
     PointsReport,
     PointsReportRow,
@@ -370,6 +372,58 @@ class ApiParsingTests(unittest.IsolatedAsyncioTestCase):
         )
         api._post.assert_awaited_once_with(
             "bot_points_report",
+            start_date="2026-10-25",
+            end_date="2026-11-24",
+        )
+
+    async def test_employee_points_detail_is_parsed_for_exact_employee_and_period(self) -> None:
+        api = SakuraAppsScriptApi("https://example.com/exec", "x" * 32)
+        api._post = AsyncMock(
+            return_value={
+                "employee_found": True,
+                "telegram_id": "101",
+                "full_name": " Иванова Анна ",
+                "start_date": "2026-10-25",
+                "end_date": "2026-11-24",
+                "total_points": "37.5",
+                "rows": [
+                    {
+                        "report_date": "2026-10-26",
+                        "article": "fgr",
+                        "quantity": "10",
+                        "points": 10,
+                    },
+                    {
+                        "report_date": "2026-10-26",
+                        "article": "SNB",
+                        "quantity": 9,
+                        "points": "27.5",
+                    },
+                    {"article": "BAD", "quantity": 0},
+                ],
+            }
+        )
+
+        detail = await api.get_employee_points_detail(101, "2026-10-25", "2026-11-24")
+
+        self.assertEqual(
+            detail,
+            EmployeePointsDetail(
+                employee_found=True,
+                telegram_id=101,
+                full_name="Иванова Анна",
+                start_date="2026-10-25",
+                end_date="2026-11-24",
+                total_points=37.5,
+                rows=(
+                    EmployeePointsRow("2026-10-26", "FGR", 10, 10.0),
+                    EmployeePointsRow("2026-10-26", "SNB", 9, 27.5),
+                ),
+            ),
+        )
+        api._post.assert_awaited_once_with(
+            "bot_employee_points_detail",
+            telegram_id="101",
             start_date="2026-10-25",
             end_date="2026-11-24",
         )

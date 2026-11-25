@@ -52,11 +52,20 @@ from .keyboards import (
     thanks_settings_keyboard,
 )
 from .special_days import format_special_days, parse_special_day_changes
-from .points_reports import build_points_workbook, format_period, points_period_for_day
+from .points_reports import (
+    build_employee_points_workbook,
+    build_points_workbook,
+    format_period,
+    format_points,
+    parse_points_month,
+    points_period_for_day,
+    points_period_for_month,
+)
 from .states import (
     ApplicationStates,
     CreatorBroadcastStates,
     CreatorMessageStates,
+    EmployeePointsStates,
     SpecialDayStates,
     ThanksCommentStates,
     UserIdMigrationStates,
@@ -461,6 +470,140 @@ def build_router(
                 f"{PINK_STARS} <b>Предварительные баллы</b>\n"
                 f"Период: <code>{format_period(period)}</code>"
             ),
+        )
+
+    @router.callback_query(F.data == "admin_employee_points")
+    async def begin_employee_points(
+        callback: CallbackQuery,
+        state: FSMContext,
+        bot: Bot,
+    ) -> None:
+        if not _is_owner(callback.from_user, settings):
+            await callback.answer("Недостаточно прав", show_alert=True)
+            return
+        await callback.answer()
+        await _remove_action_prompt(bot, state)
+        await state.clear()
+        await state.set_state(EmployeePointsStates.waiting_for_month)
+        if callback.message is not None:
+            prompt = await callback.message.answer(
+                f"{SAKURA_1} <b>Посмотреть баллы сотрудника</b>\n\n"
+                "Укажите месяц, за который нужен расчёт. Можно написать:\n"
+                "<code>11.2026</code> или <code>ноябрь 2026</code>\n\n"
+                "Месяц считается с 25-го числа предыдущего месяца по 24-е число выбранного.",
+                reply_markup=cancel_action_keyboard(),
+            )
+            await _remember_action_prompt(state, prompt)
+
+    @router.message(EmployeePointsStates.waiting_for_month)
+    async def receive_employee_points_month(
+        message: Message,
+        state: FSMContext,
+        bot: Bot,
+    ) -> None:
+        user = _require_user(message.from_user)
+        if user.id != settings.owner_id:
+            return
+        report_month = parse_points_month(message.text or "")
+        if report_month is None:
+            await message.answer(
+                "Не получилось распознать месяц. Напишите его в формате "
+                "<code>11.2026</code> или <code>ноябрь 2026</code>.",
+                reply_markup=cancel_action_keyboard(),
+            )
+            return
+
+        period = points_period_for_month(report_month)
+        await _remove_action_prompt(bot, state)
+        await state.update_data(report_month=report_month.isoformat())
+        await state.set_state(EmployeePointsStates.waiting_for_username)
+        prompt = await message.answer(
+            f"{MINIMAL_FLOWER} Период: <code>{format_period(period)}</code>\n\n"
+            "Теперь отправьте Telegram-тег сотрудника. Например: <code>@username</code>",
+            reply_markup=cancel_action_keyboard(),
+        )
+        await _remember_action_prompt(state, prompt)
+
+    @router.message(EmployeePointsStates.waiting_for_username)
+    async def receive_employee_points_username(
+        message: Message,
+        state: FSMContext,
+        bot: Bot,
+    ) -> None:
+        user = _require_user(message.from_user)
+        if user.id != settings.owner_id:
+            return
+        raw_username = (message.text or "").strip()
+        username = raw_username[1:] if raw_username.startswith("@") else raw_username
+        if not re.fullmatch(r"[A-Za-z0-9_]{3,32}", username):
+            await message.answer(
+                "Отправьте корректный Telegram-тег в формате <code>@username</code>.",
+                reply_markup=cancel_action_keyboard(),
+            )
+            return
+
+        recipient = await database.find_user_by_username(username)
+        if recipient is None:
+            await message.answer(
+                "Пользователь с таким тегом не найден среди пользователей бота. "
+                "Проверьте тег и попробуйте ещё раз.",
+                reply_markup=cancel_action_keyboard(),
+            )
+            return
+
+        data = await state.get_data()
+        try:
+            report_month = datetime.fromisoformat(str(data.get("report_month", ""))).date()
+        except ValueError:
+            await state.clear()
+            await message.answer("Месяц потерян. Начните запрос баллов заново.")
+            return
+        period = points_period_for_month(report_month)
+        moscow_today = datetime.now(MOSCOW_TIMEZONE).date()
+        current_period = points_period_for_day(moscow_today)
+        is_current = current_period.report_month == period.report_month
+        calculation_end = min(period.end, moscow_today) if is_current else period.end
+
+        try:
+            detail = await api.get_employee_points_detail(
+                recipient.telegram_id,
+                period.start.isoformat(),
+                calculation_end.isoformat(),
+            )
+        except SakuraApiError:
+            await message.answer(
+                "Сейчас не удалось рассчитать баллы. Попробуйте немного позже.",
+                reply_markup=cancel_action_keyboard(),
+            )
+            return
+        if not detail.employee_found:
+            await message.answer(
+                "Для этого пользователя не найдены данные сотрудника. "
+                "Проверьте его Telegram ID и попробуйте снова.",
+                reply_markup=cancel_action_keyboard(),
+            )
+            return
+
+        total_label = "Сейчас в кабинете" if is_current else "Итого за месяц"
+        safe_username = recipient.username or username
+        filename = f"{period.filename[:-5]}_{safe_username}.xlsx"
+
+        await _remove_action_prompt(bot, state)
+        await state.clear()
+        await message.answer(
+            f"{PINK_STARS} <b>Баллы сотрудника</b>\n\n"
+            f"Сотрудник: <b>{escape(detail.full_name)}</b>\n"
+            f"Тег: @{escape(safe_username)}\n"
+            f"Период: <code>{format_period(period)}</code>\n"
+            f"{total_label}: <b>{format_points(detail.total_points)}</b>",
+        )
+        await message.answer_document(
+            BufferedInputFile(
+                build_employee_points_workbook(detail),
+                filename=filename,
+            ),
+            caption="Подробная таблица по датам и артикулам 🌸",
+            reply_markup=main_keyboard(True),
         )
 
     @router.callback_query(F.data == "admin_refresh_access")

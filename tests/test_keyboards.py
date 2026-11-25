@@ -11,8 +11,15 @@ from bot.keyboards import (
 
 
 class KeyboardTests(unittest.TestCase):
-    def test_settings_and_thanks_share_one_main_menu_row(self) -> None:
+    def test_cabinet_and_thanks_share_one_regular_user_menu_row(self) -> None:
         keyboard = main_keyboard(is_creator=False)
+        self.assertEqual(
+            [button.text for button in keyboard.keyboard[1]],
+            ["Кабинет", "Спасибо!"],
+        )
+
+    def test_creator_keeps_settings_label(self) -> None:
+        keyboard = main_keyboard(is_creator=True)
         self.assertEqual(
             [button.text for button in keyboard.keyboard[1]],
             ["Настройки", "Спасибо!"],
@@ -49,6 +56,14 @@ class KeyboardTests(unittest.TestCase):
             for button in row
         ]
         self.assertIn("admin_points_preview", callbacks)
+
+    def test_management_has_employee_points_detail(self) -> None:
+        callbacks = [
+            button.callback_data
+            for row in management_keyboard().inline_keyboard
+            for button in row
+        ]
+        self.assertIn("admin_employee_points", callbacks)
 
     def test_broadcast_preview_can_add_or_replace_sticker(self) -> None:
         without_sticker = broadcast_confirmation_keyboard()
